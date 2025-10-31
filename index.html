@@ -63,7 +63,8 @@
       Pause: () => `<svg width="20" height="20" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`,
       RotateCcw: () => `<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>`,
       ChevronLeft: () => `<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>`,
-      ChevronRight: () => `<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>`
+      ChevronRight: () => `<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>`,
+      Sparkles: () => `<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>`
     };
 
     // 应用状态
@@ -71,7 +72,9 @@
       tasks: Storage.get('study-tasks') || [],
       activeTab: 'today',
       showAddTask: false,
+      showWeekPlanner: false,
       newTask: { name: '', subject: '', plannedMinutes: 60, date: '' },
+      weekPlan: { items: [], startDate: '' },
       currentWeekStart: getWeekStart(new Date()),
       pomodoroTask: null,
       pomodoroTime: 25 * 60,
@@ -111,6 +114,68 @@
       const date = new Date(dateStr);
       const days = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
       return `${date.getMonth() + 1}/${date.getDate()} ${days[date.getDay()]}`;
+    }
+
+    // 智能分配学习任务到一周
+    function autoDistributeTasks() {
+      if (!state.weekPlan.startDate || state.weekPlan.items.length === 0) {
+        alert('请先设置开始日期和学习项');
+        return;
+      }
+
+      const weekDates = getWeekDates(state.weekPlan.startDate);
+      const newTasks = [];
+
+      state.weekPlan.items.forEach(item => {
+        if (!item.name || !item.totalMinutes) return;
+
+        // 平均分配到工作日（周一到周五）
+        const workDays = weekDates.slice(0, 5);
+        const minutesPerDay = Math.ceil(item.totalMinutes / workDays.length);
+
+        workDays.forEach(date => {
+          newTasks.push({
+            id: Date.now() + Math.random(),
+            name: item.name,
+            subject: item.subject || '',
+            plannedMinutes: minutesPerDay,
+            date: date,
+            completed: false,
+            actualMinutes: 0,
+            createdAt: new Date().toISOString()
+          });
+        });
+      });
+
+      // 合并到现有任务
+      saveTasks([...state.tasks, ...newTasks]);
+      state.showWeekPlanner = false;
+      state.weekPlan = { items: [], startDate: '' };
+      state.activeTab = 'week';
+      alert(`成功添加 ${newTasks.length} 个学习任务！`);
+    }
+
+    // 添加周计划学习项
+    function addWeekPlanItem() {
+      state.weekPlan.items.push({
+        id: Date.now(),
+        name: '',
+        subject: '',
+        totalMinutes: 0
+      });
+      render();
+    }
+
+    function removeWeekPlanItem(id) {
+      state.weekPlan.items = state.weekPlan.items.filter(item => item.id !== id);
+      render();
+    }
+
+    function updateWeekPlanItem(id, field, value) {
+      const item = state.weekPlan.items.find(i => i.id === id);
+      if (item) {
+        item[field] = field === 'totalMinutes' ? parseInt(value) || 0 : value;
+      }
     }
 
     // 数据操作
@@ -408,6 +473,11 @@
                 </div>
               </div>
 
+              <button onclick="state.showWeekPlanner = true; state.weekPlan.startDate = state.currentWeekStart; render();" class="w-full mb-4 py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl font-medium shadow-md hover:shadow-lg transition flex items-center justify-center gap-2">
+                ${Icons.Sparkles()}
+                智能规划本周学习
+              </button>
+
               <div class="space-y-3">
                 ${weekTasks.map(({ date, tasks: dayTasks }) => {
                   const isToday = date === new Date().toISOString().split('T')[0];
@@ -432,6 +502,7 @@
                               <div class="w-2 h-2 rounded-full ${task.completed ? 'bg-green-500' : 'bg-gray-300'}"></div>
                               <span class="${task.completed ? 'line-through text-gray-400' : 'text-gray-700'}">${task.name}</span>
                               ${task.subject ? `<span class="px-2 py-0.5 bg-blue-50 text-blue-600 text-xs rounded">${task.subject}</span>` : ''}
+                              <span class="text-xs text-gray-400 ml-auto">${task.plannedMinutes}分钟</span>
                             </div>
                           `).join('')}
                         </div>
@@ -516,6 +587,72 @@
                   </button>
                   <button onclick="addTask()" class="flex-1 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl font-medium">
                     添加
+                  </button>
+                </div>
+              </div>
+            </div>
+          ` : ''}
+
+          ${state.showWeekPlanner ? `
+            <div class="fixed inset-0 bg-black/50 z-50" style="display: flex; align-items: center; justify-content: center; padding: 20px;">
+              <div class="modal-container bg-white rounded-3xl p-6 animate-fade-in" style="max-height: 85vh; overflow-y: auto;">
+                <h2 class="text-xl font-bold mb-2">智能周计划</h2>
+                <p class="text-sm text-gray-500 mb-4">设置本周学习项和总时长，系统将自动分配到工作日</p>
+                
+                <div class="mb-4">
+                  <label class="block text-sm font-medium text-gray-700 mb-2">开始日期（周一）</label>
+                  <input type="date" value="${state.weekPlan.startDate}" onchange="state.weekPlan.startDate = this.value; render();" class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500">
+                </div>
+
+                <div class="mb-4">
+                  <div class="flex items-center justify-between mb-3">
+                    <label class="text-sm font-medium text-gray-700">学习项</label>
+                    <button onclick="addWeekPlanItem()" class="text-purple-600 text-sm font-medium hover:text-purple-700">
+                      + 添加学习项
+                    </button>
+                  </div>
+                  
+                  <div class="space-y-3">
+                    ${state.weekPlan.items.length === 0 ? `
+                      <div class="text-sm text-gray-400 text-center py-4 border-2 border-dashed border-gray-300 rounded-xl">
+                        点击上方"添加学习项"开始规划
+                      </div>
+                    ` : state.weekPlan.items.map((item, index) => `
+                      <div class="border border-gray-200 rounded-xl p-3 space-y-2">
+                        <div class="flex items-center gap-2">
+                          <input type="text" value="${item.name}" oninput="updateWeekPlanItem(${item.id}, 'name', this.value)" placeholder="学习项名称" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500">
+                          <button onclick="removeWeekPlanItem(${item.id})" class="text-red-400 hover:text-red-600 p-1">
+                            ${Icons.Trash()}
+                          </button>
+                        </div>
+                        <div class="flex gap-2">
+                          <input type="text" value="${item.subject}" oninput="updateWeekPlanItem(${item.id}, 'subject', this.value)" placeholder="科目（可选）" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500">
+                          <div class="flex items-center gap-1">
+                            <input type="number" value="${item.totalMinutes}" oninput="updateWeekPlanItem(${item.id}, 'totalMinutes', this.value)" placeholder="0" class="w-20 px-3 py-2 border border-gray-300 rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <span class="text-xs text-gray-500">分钟/周</span>
+                          </div>
+                        </div>
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>
+
+                ${state.weekPlan.items.length > 0 ? `
+                  <div class="bg-purple-50 rounded-xl p-3 mb-4">
+                    <div class="text-sm text-purple-800 font-medium mb-1">分配预览</div>
+                    <div class="text-xs text-purple-600">
+                      将创建 ${state.weekPlan.items.reduce((sum, item) => sum + (item.name && item.totalMinutes ? 5 : 0), 0)} 个任务，
+                      平均每天 ${Math.round(state.weekPlan.items.reduce((sum, item) => sum + (item.totalMinutes || 0), 0) / 5)} 分钟
+                    </div>
+                  </div>
+                ` : ''}
+
+                <div class="flex gap-3">
+                  <button onclick="state.showWeekPlanner = false; state.weekPlan = { items: [], startDate: '' }; render();" class="flex-1 py-3 border border-gray-300 rounded-xl font-medium text-gray-700">
+                    取消
+                  </button>
+                  <button onclick="autoDistributeTasks()" class="flex-1 py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl font-medium">
+                    开始分配
                   </button>
                 </div>
               </div>
