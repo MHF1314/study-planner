@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#2563eb">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>学习计划管理</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * {
+      -webkit-tap-highlight-color: transparent;
+      box-sizing: border-box;
+    }
+    body {
+      overscroll-behavior: none;
+      touch-action: pan-y;
+      margin: 0;
+      padding: 0;
+    }
+    @keyframes fade-in {
+      from { opacity: 0; transform: scale(0.95); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .animate-fade-in {
+      animation: fade-in 0.2s ease-out;
+    }
+    .modal-container {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 90%;
+      max-width: 500px;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <script>
+    // 使用 localStorage 存储数据
+    const Storage = {
+      get(key) {
+        const data = localStorage.getItem(key);
+        return data ? JSON.parse(data) : null;
+      },
+      set(key, value) {
+        localStorage.setItem(key, JSON.stringify(value));
+      }
+    };
+
+    // 图标组件（SVG）
+    const Icons = {
+      Plus: () => `<svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
+      Check: () => `<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>`,
+      Clock: () => `<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
+      TrendingUp: () => `<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>`,
+      Calendar: () => `<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`,
+      Trash: () => `<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
+      Play: () => `<svg width="20" height="20" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>`,
+      Pause: () => `<svg width="20" height="20" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`,
+      RotateCcw: () => `<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>`,
+      ChevronLeft: () => `<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>`,
+      ChevronRight: () => `<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>`
+    };
+
+    // 应用状态
+    let state = {
+      tasks: Storage.get('study-tasks') || [],
+      activeTab: 'today',
+      showAddTask: false,
+      newTask: { name: '', subject: '', plannedMinutes: 60, date: '' },
+      currentWeekStart: getWeekStart(new Date()),
+      pomodoroTask: null,
+      pomodoroTime: 25 * 60,
+      isRunning: false,
+      isBreak: false,
+      showInstallTip: true
+    };
+
+    let pomodoroInterval = null;
+
+    // 工具函数
+    function getWeekStart(date) {
+      const d = new Date(date);
+      const day = d.getDay();
+      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+      return new Date(d.setDate(diff)).toISOString().split('T')[0];
+    }
+
+    function getWeekDates(weekStart) {
+      const dates = [];
+      const start = new Date(weekStart);
+      for (let i = 0; i < 7; i++) {
+        const date = new Date(start);
+        date.setDate(start.getDate() + i);
+        dates.push(date.toISOString().split('T')[0]);
+      }
+      return dates;
+    }
+
+    function formatTime(seconds) {
+      const mins = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+
+    function formatDate(dateStr) {
+      const date = new Date(dateStr);
+      const days = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+      return `${date.getMonth() + 1}/${date.getDate()} ${days[date.getDay()]}`;
+    }
+
+    // 数据操作
+    function saveTasks(tasks) {
+      state.tasks = tasks;
+      Storage.set('study-tasks', tasks);
+      render();
+    }
+
+    function addTask() {
+      if (!state.newTask.name.trim() || !state.newTask.date) return;
+      
+      const task = {
+        id: Date.now(),
+        ...state.newTask,
+        completed: false,
+        actualMinutes: 0,
+        createdAt: new Date().toISOString()
+      };
+      
+      saveTasks([...state.tasks, task]);
+      state.newTask = { name: '', subject: '', plannedMinutes: 60, date: '' };
+      state.showAddTask = false;
+    }
+
+    function toggleComplete(taskId) {
+      const tasks = state.tasks.map(task => {
+        if (task.id === taskId) {
+          return {
+            ...task,
+            completed: !task.completed,
+            actualMinutes: !task.completed ? task.plannedMinutes : task.actualMinutes
+          };
+        }
+        return task;
+      });
+      saveTasks(tasks);
+    }
+
+    function updateActualTime(taskId, minutes) {
+      const tasks = state.tasks.map(task =>
+        task.id === taskId ? { ...task, actualMinutes: parseInt(minutes) || 0 } : task
+      );
+      saveTasks(tasks);
+    }
+
+    function deleteTask(taskId) {
+      if (state.pomodoroTask?.id === taskId) {
+        stopPomodoro();
+      }
+      saveTasks(state.tasks.filter(task => task.id !== taskId));
+    }
+
+    function getTodayTasks() {
+      const today = new Date().toISOString().split('T')[0];
+      return state.tasks.filter(task => task.date === today);
+    }
+
+    function getWeekTasks() {
+      const weekDates = getWeekDates(state.currentWeekStart);
+      return weekDates.map(date => ({
+        date,
+        tasks: state.tasks.filter(task => task.date === date)
+      }));
+    }
+
+    function getWeekStats() {
+      const weekDates = getWeekDates(state.currentWeekStart);
+      const weekTasks = state.tasks.filter(task => weekDates.includes(task.date));
+      
+      const completed = weekTasks.filter(t => t.completed).length;
+      const totalPlanned = weekTasks.reduce((sum, t) => sum + t.plannedMinutes, 0);
+      const totalActual = weekTasks.reduce((sum, t) => sum + t.actualMinutes, 0);
+      
+      return { total: weekTasks.length, completed, totalPlanned, totalActual };
+    }
+
+    // 番茄钟功能
+    function startPomodoro(task) {
+      state.pomodoroTask = task;
+      state.pomodoroTime = 25 * 60;
+      state.isBreak = false;
+      state.isRunning = true;
+      
+      pomodoroInterval = setInterval(() => {
+        state.pomodoroTime--;
+        if (state.pomodoroTime <= 0) {
+          handlePomodoroComplete();
+        }
+        render();
+      }, 1000);
+      
+      render();
+    }
+
+    function togglePomodoro() {
+      state.isRunning = !state.isRunning;
+      if (state.isRunning) {
+        pomodoroInterval = setInterval(() => {
+          state.pomodoroTime--;
+          if (state.pomodoroTime <= 0) {
+            handlePomodoroComplete();
+          }
+          render();
+        }, 1000);
+      } else {
+        clearInterval(pomodoroInterval);
+      }
+      render();
+    }
+
+    function stopPomodoro() {
+      state.isRunning = false;
+      state.pomodoroTask = null;
+      state.pomodoroTime = 25 * 60;
+      state.isBreak = false;
+      clearInterval(pomodoroInterval);
+      render();
+    }
+
+    function resetPomodoro() {
+      state.isRunning = false;
+      state.pomodoroTime = state.isBreak ? 5 * 60 : 25 * 60;
+      clearInterval(pomodoroInterval);
+      render();
+    }
+
+    function handlePomodoroComplete() {
+      clearInterval(pomodoroInterval);
+      state.isRunning = false;
+      
+      if (!state.isBreak && state.pomodoroTask) {
+        const tasks = state.tasks.map(task =>
+          task.id === state.pomodoroTask.id 
+            ? { ...task, actualMinutes: task.actualMinutes + 25 }
+            : task
+        );
+        saveTasks(tasks);
+        
+        state.isBreak = true;
+        state.pomodoroTime = 5 * 60;
+      } else {
+        state.isBreak = false;
+        state.pomodoroTime = 25 * 60;
+      }
+      render();
+    }
+
+    function changeWeek(direction) {
+      const current = new Date(state.currentWeekStart);
+      current.setDate(current.getDate() + (direction * 7));
+      state.currentWeekStart = getWeekStart(current);
+      render();
+    }
+
+    // 渲染函数
+    function render() {
+      const todayTasks = getTodayTasks();
+      const weekTasks = getWeekTasks();
+      const stats = getWeekStats();
+      const completionRate = todayTasks.length > 0 
+        ? Math.round((todayTasks.filter(t => t.completed).length / todayTasks.length) * 100) 
+        : 0;
+
+      const app = document.getElementById('app');
+      app.innerHTML = `
+        <div class="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 pb-20">
+          ${state.showInstallTip ? `
+            <div class="bg-blue-600 text-white p-3 flex items-center justify-between">
+              <div class="flex-1">
+                <div class="font-medium text-sm">📱 安装应用到手机</div>
+                <div class="text-xs text-blue-100 mt-1">
+                  Chrome: 菜单 → 添加到主屏幕 | Safari: 分享 → 添加到主屏幕
+                </div>
+              </div>
+              <button onclick="state.showInstallTip = false; render();" class="text-white text-2xl px-2">
+                ×
+              </button>
+            </div>
+          ` : ''}
+
+          <div class="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-6 rounded-b-3xl shadow-lg">
+            <h1 class="text-2xl font-bold mb-2">学习计划</h1>
+            <p class="text-blue-100 text-sm">坚持每一天，成就更好的自己</p>
+          </div>
+
+          ${state.pomodoroTask ? `
+            <div class="fixed top-24 left-1/2 transform -translate-x-1/2 bg-white rounded-2xl shadow-2xl p-5 z-40 w-80 border-4 border-blue-500">
+              <div class="text-center">
+                <div class="text-sm text-gray-600 mb-2">${state.isBreak ? '休息时间' : '专注学习'}</div>
+                <div class="text-4xl font-bold text-blue-600 mb-2">${formatTime(state.pomodoroTime)}</div>
+                <div class="text-sm text-gray-700 mb-4 truncate">${state.pomodoroTask.name}</div>
+                <div class="flex gap-2 justify-center">
+                  <button onclick="togglePomodoro()" class="p-3 bg-blue-500 text-white rounded-full hover:bg-blue-600">
+                    ${state.isRunning ? Icons.Pause() : Icons.Play()}
+                  </button>
+                  <button onclick="resetPomodoro()" class="p-3 bg-gray-300 text-gray-700 rounded-full hover:bg-gray-400">
+                    ${Icons.RotateCcw()}
+                  </button>
+                  <button onclick="stopPomodoro()" class="px-4 py-2 bg-red-500 text-white rounded-full hover:bg-red-600 text-sm">
+                    结束
+                  </button>
+                </div>
+              </div>
+            </div>
+          ` : ''}
+
+          <div class="flex gap-2 px-4 mt-4">
+            <button onclick="state.activeTab = 'today'; render();" class="flex-1 py-3 rounded-xl font-medium transition ${state.activeTab === 'today' ? 'bg-white text-blue-600 shadow-md' : 'bg-white/50 text-gray-600'}">
+              ${Icons.Calendar()} 今日
+            </button>
+            <button onclick="state.activeTab = 'week'; render();" class="flex-1 py-3 rounded-xl font-medium transition ${state.activeTab === 'week' ? 'bg-white text-blue-600 shadow-md' : 'bg-white/50 text-gray-600'}">
+              ${Icons.Calendar()} 本周
+            </button>
+            <button onclick="state.activeTab = 'stats'; render();" class="flex-1 py-3 rounded-xl font-medium transition ${state.activeTab === 'stats' ? 'bg-white text-blue-600 shadow-md' : 'bg-white/50 text-gray-600'}">
+              ${Icons.TrendingUp()} 统计
+            </button>
+          </div>
+
+          ${state.activeTab === 'today' ? `
+            <div class="p-4">
+              <div class="bg-white rounded-2xl p-5 shadow-md mb-4">
+                <div class="flex justify-between items-center mb-3">
+                  <span class="text-gray-600 text-sm">今日完成度</span>
+                  <span class="text-2xl font-bold text-blue-600">${completionRate}%</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-3">
+                  <div class="bg-gradient-to-r from-blue-500 to-indigo-500 h-3 rounded-full transition-all" style="width: ${completionRate}%"></div>
+                </div>
+                <div class="mt-3 text-sm text-gray-500">
+                  已完成 ${todayTasks.filter(t => t.completed).length} / ${todayTasks.length} 个任务
+                </div>
+              </div>
+
+              <div class="space-y-3">
+                ${todayTasks.length === 0 ? `
+                  <div class="bg-white rounded-2xl p-8 text-center shadow-md">
+                    <div class="text-gray-400 mb-2">还没有学习任务</div>
+                    <div class="text-sm text-gray-400">点击下方按钮添加今日计划</div>
+                  </div>
+                ` : todayTasks.map(task => `
+                  <div class="bg-white rounded-2xl p-4 shadow-md transition ${task.completed ? 'opacity-75' : ''}">
+                    <div class="flex items-start gap-3">
+                      <button onclick="toggleComplete(${task.id})" class="mt-1 w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition ${task.completed ? 'bg-green-500 border-green-500' : 'border-gray-300 hover:border-blue-500'}">
+                        ${task.completed ? Icons.Check() : ''}
+                      </button>
+                      
+                      <div class="flex-1 min-w-0">
+                        <div class="font-medium mb-1 ${task.completed ? 'line-through text-gray-400' : 'text-gray-800'}">${task.name}</div>
+                        ${task.subject ? `<span class="inline-block px-2 py-1 bg-blue-50 text-blue-600 text-xs rounded-lg mb-2">${task.subject}</span>` : ''}
+                        <div class="flex items-center gap-4 text-sm mb-2">
+                          <div class="flex items-center gap-1 text-gray-500">
+                            ${Icons.Clock()}
+                            <span>计划 ${task.plannedMinutes}分钟</span>
+                          </div>
+                          ${task.completed ? `
+                            <input type="number" value="${task.actualMinutes}" onchange="updateActualTime(${task.id}, this.value)" class="w-20 px-2 py-1 border border-gray-300 rounded-lg text-center" placeholder="实际">
+                          ` : ''}
+                        </div>
+                        ${!task.completed ? `
+                          <button onclick='startPomodoro(${JSON.stringify(task)})' class="px-3 py-1 bg-green-500 text-white rounded-lg text-xs hover:bg-green-600 flex items-center gap-1">
+                            ${Icons.Play()} 番茄钟
+                          </button>
+                        ` : ''}
+                      </div>
+                      
+                      <button onclick="deleteTask(${task.id})" class="text-red-400 hover:text-red-600 p-2">
+                        ${Icons.Trash()}
+                      </button>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+
+          ${state.activeTab === 'week' ? `
+            <div class="p-4">
+              <div class="bg-white rounded-2xl p-4 shadow-md mb-4">
+                <div class="flex items-center justify-between">
+                  <button onclick="changeWeek(-1)" class="p-2 hover:bg-gray-100 rounded-full">
+                    ${Icons.ChevronLeft()}
+                  </button>
+                  <div class="text-center">
+                    <div class="font-bold text-gray-800">
+                      ${new Date(state.currentWeekStart).getMonth() + 1}月 第${Math.ceil(new Date(state.currentWeekStart).getDate() / 7)}周
+                    </div>
+                    <div class="text-xs text-gray-500">
+                      ${formatDate(state.currentWeekStart)} - ${formatDate(getWeekDates(state.currentWeekStart)[6])}
+                    </div>
+                  </div>
+                  <button onclick="changeWeek(1)" class="p-2 hover:bg-gray-100 rounded-full">
+                    ${Icons.ChevronRight()}
+                  </button>
+                </div>
+              </div>
+
+              <div class="space-y-3">
+                ${weekTasks.map(({ date, tasks: dayTasks }) => {
+                  const isToday = date === new Date().toISOString().split('T')[0];
+                  const completedCount = dayTasks.filter(t => t.completed).length;
+                  
+                  return `
+                    <div class="bg-white rounded-2xl p-4 shadow-md ${isToday ? 'border-2 border-blue-500' : ''}">
+                      <div class="flex items-center justify-between mb-3">
+                        <div>
+                          <div class="font-bold text-gray-800">${formatDate(date)}</div>
+                          ${isToday ? '<span class="text-xs text-blue-600">今天</span>' : ''}
+                        </div>
+                        <div class="text-sm text-gray-500">${completedCount}/${dayTasks.length} 完成</div>
+                      </div>
+                      
+                      ${dayTasks.length === 0 ? `
+                        <div class="text-sm text-gray-400 text-center py-2">暂无任务</div>
+                      ` : `
+                        <div class="space-y-2">
+                          ${dayTasks.map(task => `
+                            <div class="flex items-center gap-2 text-sm">
+                              <div class="w-2 h-2 rounded-full ${task.completed ? 'bg-green-500' : 'bg-gray-300'}"></div>
+                              <span class="${task.completed ? 'line-through text-gray-400' : 'text-gray-700'}">${task.name}</span>
+                              ${task.subject ? `<span class="px-2 py-0.5 bg-blue-50 text-blue-600 text-xs rounded">${task.subject}</span>` : ''}
+                            </div>
+                          `).join('')}
+                        </div>
+                      `}
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+          ` : ''}
+
+          ${state.activeTab === 'stats' ? `
+            <div class="p-4 space-y-4">
+              <div class="bg-white rounded-2xl p-5 shadow-md">
+                <h3 class="font-bold text-gray-800 mb-4">本周数据</h3>
+                <div class="grid grid-cols-2 gap-4">
+                  <div class="text-center">
+                    <div class="text-3xl font-bold text-blue-600">${stats.total}</div>
+                    <div class="text-sm text-gray-500 mt-1">总任务数</div>
+                  </div>
+                  <div class="text-center">
+                    <div class="text-3xl font-bold text-green-600">${stats.completed}</div>
+                    <div class="text-sm text-gray-500 mt-1">已完成</div>
+                  </div>
+                  <div class="text-center">
+                    <div class="text-3xl font-bold text-purple-600">${Math.round(stats.totalPlanned / 60)}h</div>
+                    <div class="text-sm text-gray-500 mt-1">计划时长</div>
+                  </div>
+                  <div class="text-center">
+                    <div class="text-3xl font-bold text-orange-600">${Math.round(stats.totalActual / 60)}h</div>
+                    <div class="text-sm text-gray-500 mt-1">实际时长</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="bg-white rounded-2xl p-5 shadow-md">
+                <h3 class="font-bold text-gray-800 mb-3">完成率</h3>
+                <div class="text-center">
+                  <div class="text-5xl font-bold text-blue-600 mb-2">
+                    ${stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0}%
+                  </div>
+                  <div class="text-sm text-gray-500">保持这个势头！</div>
+                </div>
+              </div>
+            </div>
+          ` : ''}
+
+          <button onclick="state.showAddTask = true; render();" class="fixed bottom-6 right-6 w-14 h-14 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-full shadow-lg flex items-center justify-center hover:shadow-xl transition z-30">
+            ${Icons.Plus()}
+          </button>
+
+          ${state.showAddTask ? `
+            <div class="fixed inset-0 bg-black/50 z-50" style="display: flex; align-items: center; justify-content: center; padding: 20px;">
+              <div class="modal-container bg-white rounded-3xl p-6 animate-fade-in" style="max-height: 80vh; overflow-y: auto;">
+                <h2 class="text-xl font-bold mb-4">添加学习任务</h2>
+                
+                <div class="space-y-4">
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">任务名称</label>
+                    <input type="text" id="taskName" value="${state.newTask.name}" oninput="state.newTask.name = this.value" class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="例如：复习数学第三章">
+                  </div>
+                  
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">科目/类别</label>
+                    <input type="text" id="taskSubject" value="${state.newTask.subject}" oninput="state.newTask.subject = this.value" class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="例如：数学">
+                  </div>
+                  
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">计划时长（分钟）</label>
+                    <input type="number" id="taskMinutes" value="${state.newTask.plannedMinutes}" oninput="state.newTask.plannedMinutes = parseInt(this.value) || 0" class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  </div>
+
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">日期</label>
+                    <input type="date" id="taskDate" value="${state.newTask.date}" oninput="state.newTask.date = this.value" class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  </div>
+                </div>
+
+                <div class="flex gap-3 mt-6">
+                  <button onclick="state.showAddTask = false; render();" class="flex-1 py-3 border border-gray-300 rounded-xl font-medium text-gray-700">
+                    取消
+                  </button>
+                  <button onclick="addTask()" class="flex-1 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl font-medium">
+                    添加
+                  </button>
+                </div>
+              </div>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }
+
+    // 初始渲染
+    render();
+  </script>
+</body>
+</html>
